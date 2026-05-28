@@ -1,0 +1,10 @@
+pydantic
+langchain
+langchain-core
+langchain-openai
+python-dotenv
+pypdf
+langchain-tavily
+fastapi
+uvicorn[standard]
+python-multipart

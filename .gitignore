@@ -1,0 +1,16 @@
+# Virtual environment
+venv/
+.venv/
+
+# Secrets / local config
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# OS
+.DS_Store

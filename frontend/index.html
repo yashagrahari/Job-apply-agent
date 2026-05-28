@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Job Apply Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=Instrument+Serif:ital@0;1&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">Job Apply Agent</span>
+        </div>
+        <p class="tagline">Upload your resume. We match you with relevant openings in India.</p>
+      </header>
+
+      <main class="main">
+        <section class="upload-section" id="upload-section">
+          <div
+            class="dropzone"
+            id="dropzone"
+            role="button"
+            tabindex="0"
+            aria-label="Upload resume PDF"
+          >
+            <input
+              type="file"
+              id="file-input"
+              accept=".pdf,application/pdf"
+              hidden
+            />
+            <div class="dropzone-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M24 32V16M24 16L18 22M24 16L30 22"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+                <path
+                  d="M8 32V36C8 38.2091 9.79086 40 12 40H36C38.2091 40 40 38.2091 40 36V32"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </div>
+            <p class="dropzone-title">Drop your resume here</p>
+            <p class="dropzone-hint">PDF only · up to 10 MB</p>
+            <button type="button" class="btn btn-primary" id="browse-btn">
+              Choose file
+            </button>
+            <p class="file-name" id="file-name" hidden></p>
+          </div>
+
+          <button
+            type="button"
+            class="btn btn-accent"
+            id="search-btn"
+            disabled
+          >
+            Find relevant jobs
+          </button>
+        </section>
+
+        <div class="status" id="status" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <div class="status-text">
+            <p class="status-title" id="status-title">Analyzing your resume…</p>
+            <p class="status-detail" id="status-detail">
+              Extracting skills and searching for matching roles. This may take a minute.
+            </p>
+          </div>
+        </div>
+
+        <div class="error-banner" id="error-banner" hidden role="alert"></div>
+
+        <section class="results" id="results" hidden>
+          <article class="profile-card" id="profile-card">
+            <h2 class="section-title">Your profile</h2>
+            <p class="exp-badge" id="exp-badge"></p>
+            <div class="profile-block">
+              <h3>Target roles</h3>
+              <ul class="chip-list" id="roles-list"></ul>
+            </div>
+            <div class="profile-block">
+              <h3>Skills</h3>
+              <ul class="chip-list chip-list--muted" id="skills-list"></ul>
+            </div>
+          </article>
+
+          <section class="jobs-section">
+            <div class="jobs-header">
+              <h2 class="section-title">Matching jobs</h2>
+              <span class="jobs-count" id="jobs-count"></span>
+            </div>
+            <div class="jobs-grid" id="jobs-grid"></div>
+          </section>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Powered by AI · Jobs sourced via live web search</p>
+      </footer>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

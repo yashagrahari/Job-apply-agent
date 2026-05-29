@@ -57,79 +57,52 @@ Uses the bundled sample resume in the project root.
 
 - `GET /api/health` — health check
 - `POST /api/search-jobs` — multipart form field `resume` (PDF), returns candidate profile and job list
+- `POST /api/prepare-application` — JSON `{ "candidate", "job" }`, returns cover letter, form answers, and apply checklist
 
-## Deploy
+## Apply for jobs (how it works)
 
-### Important: Vercel vs long-running API
+### What you have now (Phase 1 — implemented)
 
-`POST /api/search-jobs` runs PDF parsing + OpenAI + Tavily and often takes **1–3+ minutes**.
+1. **Find jobs** → `POST /api/search-jobs`
+2. **Prepare application** on each card → `POST /api/prepare-application`
+   - Tailored cover letter
+   - “Why you fit” bullets
+   - Answers for common form fields
+   - Checklist to finish on the employer site
+3. **Open apply page** → paste materials and upload resume manually
 
-| Platform | Good fit? | Why |
-|----------|-----------|-----|
-| **Render / Railway / Fly.io** | Yes | Long HTTP requests, always-on or container |
-| **Vercel** | Risky | Serverless **timeout** (Hobby ~10s; Pro up to 300s with config). May fail mid-search. |
+This is the reliable approach: every company uses a different form (LinkedIn, Greenhouse, Lever, Naukri, etc.).
 
-**Recommended:** deploy the full app on [Render](https://render.com) (free tier) or Railway. Use Vercel only for the static UI if you host the API elsewhere.
+### Phase 2 — semi-automatic (browser agent, local)
 
----
+To actually click “Submit” on forms:
 
-### Option A — Vercel (frontend + API, with limits)
+| Piece | Tool |
+|-------|------|
+| Browser control | [Playwright](https://playwright.dev/python/) |
+| Form understanding | LLM + page snapshot (like your LangChain agents) |
+| Auth | User logs in once; save `storage_state` to a file |
 
-1. Push the repo to GitHub (`.env` is gitignored; never commit keys).
-
-2. Import the project on [vercel.com](https://vercel.com) → **Add New Project** → select the repo.
-
-3. **Environment variables** (Project → Settings → Environment Variables):
-
-   | Name | Value |
-   |------|--------|
-   | `OPENAI_API_KEY` | your key |
-   | `TAVILY_API_KEY` | your key |
-   | `OPENAI_MODEL` | e.g. `gpt-4o` |
-
-4. Deploy. Vercel uses `vercel.json` and `api/index.py` in this repo.
-
-5. Open your `*.vercel.app` URL (same origin for UI + `/api/*`).
-
-**If search-jobs times out:** upgrade to Vercel Pro (for `maxDuration: 300` in `vercel.json`) or move the API to Render (Option B).
-
-**CLI deploy:**
+Run a **separate worker** (not Vercel serverless):
 
 ```bash
-npm i -g vercel
-vercel login
-vercel          # preview
-vercel --prod   # production
+pip install playwright
+playwright install chromium
+# python apply_worker.py --url "https://jobs.lever.co/..." --profile profile.json
 ```
 
----
+Start with **one ATS** (e.g. Greenhouse/Lever URLs). Your code already flags those in `assess_auto_apply_feasibility()`.
 
-### Option B — Render (recommended for this app)
+### Phase 3 — full product
 
-1. [render.com](https://render.com) → **New → Web Service** → connect GitHub repo.
+- User profile store (name, email, phone, work history, resume path)
+- Application queue + status (`draft` → `prepared` → `submitted` → `failed`)
+- Per-platform adapters (`greenhouse.py`, `lever.py`, …)
+- Human-in-the-loop for captcha / OTP (pause agent, user continues, resume)
 
-2. Settings:
+### Limits (important)
 
-   - **Runtime:** Python 3
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `uvicorn api:app --host 0.0.0.0 --port $PORT`
+- **LinkedIn / Indeed / Naukri**: login + anti-bot → manual or official APIs only
+- **Legal / ToS**: automate only where allowed; prefer assist + human submit
+- **Vercel**: cannot run Playwright; use Render/Fly for the apply worker
 
-3. Add env vars: `OPENAI_API_KEY`, `TAVILY_API_KEY`, `OPENAI_MODEL`.
-
-4. Deploy and open the Render URL.
-
----
-
-### Option C — Vercel UI + API on Render
-
-1. Deploy API on Render (Option B). Note the URL, e.g. `https://job-apply-agent.onrender.com`.
-
-2. In `frontend/app.js`, set:
-
-   ```js
-   const API_BASE = "https://job-apply-agent.onrender.com";
-   ```
-
-3. Deploy only `frontend/` to Vercel as a static site, or use any static host.
-
-Enable CORS on the API if the UI and API are on different domains (already allows `*` in `api.py`).

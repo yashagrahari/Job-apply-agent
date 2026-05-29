@@ -9,6 +9,7 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from job_sources import get_configured_ats_boards, normalize_apply_link
 from pydantic import BaseModel
 
 from agent import (
@@ -96,10 +97,13 @@ async def _read_resume_upload(resume: UploadFile) -> tuple[bytes, str]:
 
 @app.get("/api/health")
 def health():
+    ats_boards = get_configured_ats_boards()
     return {
         "status": "ok",
         "openai_configured": bool(os.getenv("OPENAI_API_KEY")),
         "tavily_configured": bool(os.getenv("TAVILY_API_KEY")),
+        "ats_source_count": len(ats_boards),
+        "ats_sources": [f"{board.provider}:{board.slug}" for board in ats_boards],
         "model": OPENAI_MODEL,
         "env_file": str(PROJECT_ROOT / ".env"),
     }
@@ -133,9 +137,7 @@ async def parse_resume(resume: UploadFile = File(...)):
 
 
 def _job_to_dict(job) -> dict:
-    link = (job.apply_link or "").strip()
-    if link and not link.startswith(("http://", "https://")):
-        link = f"https://{link}"
+    link = normalize_apply_link(job.apply_link)
     return {
         "platform": job.platform,
         "role": job.role,

@@ -3,6 +3,13 @@ import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
+from job_sources import (
+    SourceJob,
+    extract_ats_boards_from_urls,
+    is_live_job_url,
+    normalize_apply_link,
+    search_ats_jobs,
+)
 from langchain.agents import create_agent
 from langchain_tavily import TavilySearch
 from pypdf import PdfReader
@@ -14,10 +21,24 @@ load_dotenv()
 PROJECT_ROOT = Path(__file__).parent.resolve()
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4")
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+
+JOB_SEARCH_TARGET_RESULTS = _env_int("JOB_SEARCH_TARGET_RESULTS", 50)
+
 if "OPENAI_API_KEY" not in os.environ and __name__ == "__main__":
     os.environ["OPENAI_API_KEY"] = input("Enter your OpenAI API key: ")
 
-tavily_search = TavilySearch(max_results=10, topic="general")
+tavily_search = (
+    TavilySearch(max_results=10, topic="general")
+    if os.getenv("TAVILY_API_KEY")
+    else None
+)
 
 
 class CandidateInfo(BaseModel):
@@ -88,11 +109,12 @@ extract_agent = create_agent(
 job_agent = create_agent(
     f"openai:{OPENAI_MODEL}",
     response_format=RelevantJobs,
-    tools=[tavily_search],
+    tools=[tavily_search] if tavily_search else [],
     system_prompt=(
-        "You are a helpful assistant. You help candidates fetch the latest and "
-        "relevant jobs in India based on their skills, experience, and target roles. "
-        "You have access to search tools. Use them to fetch the latest relevant job postings."
+        "You are a fallback job-search assistant. Find active, relevant jobs in India "
+        "based on skills, experience, and target roles. Prefer direct employer/ATS URLs "
+        "(Greenhouse, Lever, Ashby, Workable, company career pages) over job-board mirrors. "
+        "Do not invent employers, roles, or links; return only postings that appear active."
     ),
 )
 
@@ -120,10 +142,19 @@ def assess_auto_apply_feasibility(apply_link: str) -> tuple[bool, str]:
             False,
             "Large job boards require login and often block bots — use their site manually.",
         )
-    if any(host in url for host in ("greenhouse.io", "jobs.lever.co", "lever.co", "workable.com")):
+    if any(
+        host in url
+        for host in (
+            "greenhouse.io",
+            "jobs.lever.co",
+            "lever.co",
+            "ashbyhq.com",
+            "workable.com",
+        )
+    ):
         return (
             True,
-            "Standard ATS form (Greenhouse/Lever/Workable) — a Playwright agent can target these next.",
+            "Standard ATS form (Greenhouse/Lever/Ashby/Workable) — a Playwright agent can target these next.",
         )
     return (
         False,
@@ -163,25 +194,122 @@ def extract_candidate_info(resume_text: str) -> CandidateInfo:
     return result["structured_response"]
 
 
-def search_relevant_jobs(candidate: CandidateInfo) -> List[JobDetails]:
-    """Search for jobs matching the candidate profile."""
+def _source_job_to_details(job: SourceJob) -> JobDetails:
+    return JobDetails(
+        platform=job.platform,
+        role=job.role,
+        Exp=max(0, job.experience),
+        contact_info=job.contact_info,
+        location=job.location,
+        apply_link=normalize_apply_link(job.apply_link),
+    )
+
+
+def _search_jobs_with_tavily(candidate: CandidateInfo) -> List[JobDetails]:
+    """Fallback: use Tavily/search when ATS sources do not produce enough jobs."""
+    if tavily_search is None:
+        return []
+
     details = (
         f"roles={candidate.roles} skills={candidate.skills} Exp={candidate.Exp}"
     )
-    result = job_agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": f"Find relevant jobs in India with these details: {details}",
-                }
-            ]
-        }
-    )
+    try:
+        result = job_agent.invoke(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "Find relevant active jobs in India with these details. "
+                            "Return direct apply URLs and prefer employer ATS links "
+                            f"when available: {details}"
+                        ),
+                    }
+                ]
+            }
+        )
+    except Exception:
+        return []
+
     structured = result["structured_response"]
-    if isinstance(structured, RelevantJobs):
-        return structured.jobs
-    return structured.jobs if hasattr(structured, "jobs") else structured["jobs"]
+    jobs = structured.jobs if isinstance(structured, RelevantJobs) else (
+        structured.jobs if hasattr(structured, "jobs") else structured["jobs"]
+    )
+    for job in jobs:
+        job.apply_link = normalize_apply_link(job.apply_link)
+        if not job.platform:
+            job.platform = "Search fallback"
+    return jobs
+
+
+def _dedupe_jobs(jobs: List[JobDetails]) -> List[JobDetails]:
+    seen: set[str] = set()
+    unique: list[JobDetails] = []
+    for job in jobs:
+        link = normalize_apply_link(job.apply_link)
+        key = link.lower().rstrip("/") if link else (
+            f"{job.platform}|{job.role}|{job.location}".lower()
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        job.apply_link = link
+        unique.append(job)
+    return unique
+
+
+def _validate_live_jobs(jobs: List[JobDetails]) -> List[JobDetails]:
+    max_checks = _env_int("JOB_URL_VALIDATION_MAX_CHECKS", 30)
+    checked = 0
+    live: list[JobDetails] = []
+
+    for job in jobs:
+        job.apply_link = normalize_apply_link(job.apply_link)
+        if not job.apply_link:
+            continue
+
+        if checked < max_checks:
+            checked += 1
+            if not is_live_job_url(job.apply_link):
+                continue
+
+        live.append(job)
+        if len(live) >= JOB_SEARCH_TARGET_RESULTS:
+            break
+
+    return live
+
+
+def search_relevant_jobs(candidate: CandidateInfo) -> List[JobDetails]:
+    """Search active jobs: ATS APIs first, Tavily fallback, URL validation last."""
+    primary_ats_jobs = search_ats_jobs(
+        roles=candidate.roles,
+        skills=candidate.skills,
+        years_exp=candidate.Exp,
+        limit=JOB_SEARCH_TARGET_RESULTS * 3,
+    )
+    jobs = [_source_job_to_details(job) for job in primary_ats_jobs]
+
+    fallback_jobs: List[JobDetails] = []
+    if len(_dedupe_jobs(jobs)) < JOB_SEARCH_TARGET_RESULTS:
+        fallback_jobs = _search_jobs_with_tavily(candidate)
+        discovered_boards = extract_ats_boards_from_urls(
+            job.apply_link for job in fallback_jobs
+        )
+        if discovered_boards:
+            discovered_ats_jobs = search_ats_jobs(
+                roles=candidate.roles,
+                skills=candidate.skills,
+                years_exp=candidate.Exp,
+                boards=discovered_boards,
+                limit=JOB_SEARCH_TARGET_RESULTS * 2,
+            )
+            jobs.extend(_source_job_to_details(job) for job in discovered_ats_jobs)
+
+    if len(_dedupe_jobs(jobs)) < JOB_SEARCH_TARGET_RESULTS:
+        jobs.extend(fallback_jobs)
+
+    return _validate_live_jobs(_dedupe_jobs(jobs))
 
 
 def process_resume_file(file_path: str | Path) -> JobSearchResult:

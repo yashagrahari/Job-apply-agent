@@ -1,6 +1,6 @@
 # Job Apply Agent
 
-Upload your resume and get AI-matched job listings in India based on your skills, experience, and target roles.
+Upload your resume and get AI-matched active job listings in India based on your skills, experience, and target roles.
 
 ## Setup
 
@@ -21,6 +21,17 @@ OPENAI_MODEL=gpt-4o
 ```
 
 Optional: set `OPENAI_MODEL=gpt-5.4` if your account supports it.
+
+Optional ATS source tuning:
+
+```
+# Provider slugs or full ATS URLs. If omitted, a small default seed list is used.
+ATS_BOARD_SOURCES=greenhouse:stripe,lever:postman,ashby:openai
+
+# Use "*" or "any" to disable the default India/remote/APAC location filter.
+JOB_LOCATION_KEYWORDS=india,bangalore,bengaluru,hyderabad,pune,mumbai,delhi,gurgaon,gurugram,noida,chennai,remote,apac,asia,global,worldwide,anywhere
+JOB_SEARCH_TARGET_RESULTS=12
+```
 
 ## Run the web UI
 
@@ -45,6 +56,16 @@ uvicorn api:app --reload --host 0.0.0.0 --port 8001 --log-level info
 
 Open [http://localhost:8000](http://localhost:8000) (or `:8001` if you changed the port), upload a PDF resume, and click **Find relevant jobs**.
 
+## Job sourcing strategy
+
+The search pipeline now uses a hybrid source model:
+
+1. **ATS APIs first** — fetch active postings from Greenhouse, Lever, and Ashby board endpoints.
+2. **Tavily/search fallback** — fill gaps and discover additional ATS boards when configured sources are not enough.
+3. **Live URL validation last** — remove known-dead links before jobs are returned.
+
+Greenhouse, Lever, and Ashby boards are per-company, so coverage depends on the board slugs in `ATS_BOARD_SOURCES`. The health endpoint returns the active source list under `ats_sources`.
+
 ## CLI (optional)
 
 ```bash
@@ -55,7 +76,7 @@ Uses the bundled sample resume in the project root.
 
 ## API
 
-- `GET /api/health` — health check
+- `GET /api/health` — health check, including ATS source count/list
 - `POST /api/search-jobs` — multipart form field `resume` (PDF), returns candidate profile and job list
 - `POST /api/prepare-application` — JSON `{ "candidate", "job" }`, returns cover letter, form answers, and apply checklist
 
@@ -64,6 +85,9 @@ Uses the bundled sample resume in the project root.
 ### What you have now (Phase 1 — implemented)
 
 1. **Find jobs** → `POST /api/search-jobs`
+   - ATS APIs are queried first for active postings
+   - Tavily fills gaps when ATS results are sparse
+   - Job links are validated before returning
 2. **Prepare application** on each card → `POST /api/prepare-application`
    - Tailored cover letter
    - “Why you fit” bullets
@@ -105,4 +129,3 @@ Start with **one ATS** (e.g. Greenhouse/Lever URLs). Your code already flags tho
 - **LinkedIn / Indeed / Naukri**: login + anti-bot → manual or official APIs only
 - **Legal / ToS**: automate only where allowed; prefer assist + human submit
 - **Vercel**: cannot run Playwright; use Render/Fly for the apply worker
-

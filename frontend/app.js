@@ -67,7 +67,7 @@ function setLoading(loading) {
     resultsEl.hidden = true;
     statusTitle.textContent = "Analyzing your resume…";
     statusDetail.textContent =
-      "Extracting skills and searching for matching roles. This may take a minute.";
+      "Extracting skills, checking ATS feeds, and validating live job links. This may take a minute.";
   }
 }
 

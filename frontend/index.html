@@ -112,6 +112,23 @@
         <p>Powered by AI · Jobs sourced via live web search</p>
       </footer>
     </div>
+
+    <div class="modal-overlay" id="apply-modal" hidden>
+      <div class="modal" role="dialog" aria-labelledby="modal-title" aria-modal="true">
+        <header class="modal-header">
+          <h2 class="modal-title" id="modal-title">Application kit</h2>
+          <button type="button" class="modal-close" id="modal-close" aria-label="Close">×</button>
+        </header>
+        <div class="modal-body" id="modal-body"></div>
+        <footer class="modal-footer">
+          <button type="button" class="btn btn-primary" id="modal-copy-btn">Copy all</button>
+          <a class="btn btn-accent" id="modal-open-apply" href="#" target="_blank" rel="noopener noreferrer">
+            Open apply page →
+          </a>
+        </footer>
+      </div>
+    </div>
+
     <script src="/static/app.js"></script>
   </body>
 </html>

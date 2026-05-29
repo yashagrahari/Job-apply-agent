@@ -9,13 +9,22 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
 from agent import (
     OPENAI_MODEL,
     PROJECT_ROOT,
+    CandidateInfo,
+    JobDetails,
     parse_resume_pdf,
+    prepare_application_package,
     process_uploaded_bytes,
 )
+
+
+class PrepareApplicationRequest(BaseModel):
+    candidate: CandidateInfo
+    job: JobDetails
 
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 ALLOWED_EXTENSIONS = {".pdf"}
@@ -162,6 +171,30 @@ async def search_jobs(resume: UploadFile = File(...)):
         "candidate": result.candidate.model_dump(),
         "jobs": jobs,
         "links": links,
+    }
+
+
+@app.post("/api/prepare-application")
+async def prepare_application(body: PrepareApplicationRequest):
+    """Generate cover letter, form answers, and apply checklist for one job."""
+    logger.info(
+        "prepare-application: %s @ %s",
+        body.job.role,
+        body.job.platform,
+    )
+    try:
+        package = await asyncio.to_thread(
+            prepare_application_package, body.candidate, body.job
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to prepare application: {exc}",
+        ) from exc
+
+    return {
+        "job": _job_to_dict(body.job),
+        "application": package.model_dump(),
     }
 
 

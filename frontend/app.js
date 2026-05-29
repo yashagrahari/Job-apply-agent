@@ -13,11 +13,20 @@ const rolesList = document.getElementById("roles-list");
 const skillsList = document.getElementById("skills-list");
 const jobsCount = document.getElementById("jobs-count");
 const jobsGrid = document.getElementById("jobs-grid");
+const applyModal = document.getElementById("apply-modal");
+const modalTitle = document.getElementById("modal-title");
+const modalBody = document.getElementById("modal-body");
+const modalClose = document.getElementById("modal-close");
+const modalCopyBtn = document.getElementById("modal-copy-btn");
+const modalOpenApply = document.getElementById("modal-open-apply");
 
 const API_BASE = "";
 const MAX_BYTES = 10 * 1024 * 1024;
+const APPLIED_KEY = "job-apply-agent:applied";
 
 let selectedFile = null;
+let lastSearchData = null;
+let modalPlainText = "";
 
 function apiUrl(path) {
   return `${API_BASE}${path}`;
@@ -77,9 +86,28 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+function jobKey(job) {
+  return `${job.role}|${job.platform}|${job.apply_link}`;
+}
+
+function getAppliedSet() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(APPLIED_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function markJobApplied(job) {
+  const set = getAppliedSet();
+  set.add(jobKey(job));
+  localStorage.setItem(APPLIED_KEY, JSON.stringify([...set]));
+}
+
 function renderJobs(jobs) {
   jobsGrid.innerHTML = "";
   jobsCount.textContent = `${jobs.length} found`;
+  const applied = getAppliedSet();
 
   if (!jobs.length) {
     jobsGrid.innerHTML =
@@ -87,7 +115,7 @@ function renderJobs(jobs) {
     return;
   }
 
-  jobs.forEach((job) => {
+  jobs.forEach((job, index) => {
     const card = document.createElement("article");
     card.className = "job-card";
 
@@ -106,9 +134,13 @@ function renderJobs(jobs) {
           ? `https://${rawLink}`
           : "";
 
-    const applyCta = link
-      ? `<a class="job-apply" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Apply now →</a>`
-      : `<p class="job-no-link">No apply link available</p>`;
+    const appliedBadge = applied.has(jobKey(job))
+      ? '<span class="job-applied-badge">Prepared / applied</span>'
+      : "";
+
+    const applyLink = link
+      ? `<a class="job-apply" href="${escapeHtml(link)}" target="_blank" rel="noopener noreferrer">Open job page →</a>`
+      : "";
 
     card.innerHTML = `
       <div class="job-card-header">
@@ -120,13 +152,25 @@ function renderJobs(jobs) {
         <span>⏱ ${escapeHtml(String(job.Exp))}+ yrs exp</span>
       </div>
       ${contact}
-      ${applyCta}
+      <div class="job-actions">
+        <button type="button" class="job-prepare" data-job-index="${index}">Prepare application</button>
+        ${applyLink}
+        ${appliedBadge}
+      </div>
     `;
     jobsGrid.appendChild(card);
+  });
+
+  jobsGrid.querySelectorAll(".job-prepare").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const job = jobs[Number(btn.dataset.jobIndex)];
+      if (job) prepareApplication(job, btn);
+    });
   });
 }
 
 function renderResults(data) {
+  lastSearchData = data;
   const candidate = data.candidate ?? {};
   const jobs = data.jobs ?? [];
   expBadge.textContent = `${candidate.Exp ?? "—"} years experience`;
@@ -134,6 +178,91 @@ function renderResults(data) {
   renderChips(skillsList, candidate.skills ?? []);
   renderJobs(jobs);
   resultsEl.hidden = false;
+}
+
+function closeModal() {
+  applyModal.hidden = true;
+  document.body.style.overflow = "";
+}
+
+function openModal(job, application) {
+  const link = (job.apply_link || "").trim();
+  modalTitle.textContent = `Application kit — ${job.role}`;
+  modalOpenApply.href = link || "#";
+  modalOpenApply.hidden = !link;
+
+  const answers = application.common_answers || {};
+  const answersHtml = Object.entries(answers)
+    .map(
+      ([q, a]) =>
+        `<li><strong>${escapeHtml(q)}</strong><br>${escapeHtml(a)}</li>`
+    )
+    .join("");
+
+  modalBody.innerHTML = `
+    <p class="modal-note">${escapeHtml(application.auto_apply_note || "")}</p>
+    <h3>Cover letter</h3>
+    <pre class="cover-letter">${escapeHtml(application.cover_letter || "")}</pre>
+    <h3>Why you fit</h3>
+    <ul>${(application.why_you_fit || []).map((b) => `<li>${escapeHtml(b)}</li>`).join("")}</ul>
+    <h3>Common form answers</h3>
+    <ul>${answersHtml || "<li>No answers generated</li>"}</ul>
+    <h3>Apply checklist</h3>
+    <ul>${(application.apply_checklist || []).map((s) => `<li>${escapeHtml(s)}</li>`).join("")}</ul>
+  `;
+
+  modalPlainText = [
+    application.cover_letter,
+    "",
+    "Why you fit:",
+    ...(application.why_you_fit || []).map((b) => `• ${b}`),
+    "",
+    "Form answers:",
+    ...Object.entries(answers).map(([q, a]) => `${q}: ${a}`),
+    "",
+    "Checklist:",
+    ...(application.apply_checklist || []).map((s, i) => `${i + 1}. ${s}`),
+  ].join("\n");
+
+  applyModal.hidden = false;
+  document.body.style.overflow = "hidden";
+}
+
+async function prepareApplication(job, button) {
+  if (!lastSearchData?.candidate) {
+    showError("Search for jobs first so we can tailor your application.");
+    return;
+  }
+
+  hideError();
+  button.disabled = true;
+  const label = button.textContent;
+  button.textContent = "Preparing…";
+
+  try {
+    const response = await fetch(apiUrl("/api/prepare-application"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        candidate: lastSearchData.candidate,
+        job,
+      }),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || "Failed to prepare application.");
+    }
+
+    markJobApplied(job);
+    openModal(job, data.application);
+    renderJobs(lastSearchData.jobs ?? []);
+  } catch (err) {
+    showError(err.message || "Failed to prepare application.");
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 }
 
 async function searchJobs() {
@@ -218,6 +347,25 @@ dropzone.addEventListener("drop", (e) => {
 });
 
 searchBtn.addEventListener("click", searchJobs);
+
+modalClose.addEventListener("click", closeModal);
+applyModal.addEventListener("click", (e) => {
+  if (e.target === applyModal) closeModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !applyModal.hidden) closeModal();
+});
+modalCopyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(modalPlainText);
+    modalCopyBtn.textContent = "Copied!";
+    setTimeout(() => {
+      modalCopyBtn.textContent = "Copy all";
+    }, 2000);
+  } catch {
+    showError("Could not copy to clipboard.");
+  }
+});
 
 async function checkServer() {
   if (window.location.protocol === "file:") {
